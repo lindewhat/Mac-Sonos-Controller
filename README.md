@@ -72,6 +72,8 @@ A setup guide opens the first time. macOS asks for two permissions:
 - Hold **Option** while pressing a media key to send that press to the Mac as usual.
 - With "Use F1, F2, etc. as standard function keys" turned on, press **Fn** with the key (for example Fn+F8).
 
+**If something goes wrong:** the app keeps a short text log on your Mac at `~/Library/Logs/MacSonosControl/MacSonosControl.log` (open it from Finder with Go > Go to Folder). It lists what failed and why, and never leaves your Mac. If you ask Claude for help, tell it where the log is.
+
 ## Update
 
 When a new version is published here, it is not sent to your Mac automatically: your installed app stays as it is until you update it. To update:

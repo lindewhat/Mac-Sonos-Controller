@@ -71,8 +71,11 @@ public protocol SonosTransport: Sendable {
 /// The real thing: plain HTTP to the speaker on the local network.
 public struct HTTPSonosTransport: SonosTransport {
     private let session: URLSession
+    private let log: Log?
 
-    public init(session: URLSession? = nil, timeout: TimeInterval = 3) {
+    /// `log` is where failures are recorded (the app passes its own; tests pass none, so they never write a real log).
+    public init(session: URLSession? = nil, timeout: TimeInterval = 3, log: Log? = nil) {
+        self.log = log
         if let session {
             self.session = session
         } else {
@@ -86,6 +89,7 @@ public struct HTTPSonosTransport: SonosTransport {
 
     public func send(_ call: SOAPCall, to host: String) async throws -> [String: String] {
         guard let url = URL(string: "http://\(host):1400\(call.service.controlPath)") else {
+            log?.error("sonos", "\(call.action) failed: bad speaker address")
             throw SonosError.unreachable
         }
         var request = URLRequest(url: url)
@@ -99,13 +103,37 @@ public struct HTTPSonosTransport: SonosTransport {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            log?.error("sonos", "\(host) \(call.action) failed: no answer (\(Self.describe(error)))")
             throw SonosError.unreachable
         }
-        guard let http = response as? HTTPURLResponse else { throw SonosError.badResponse }
+        guard let http = response as? HTTPURLResponse else {
+            log?.error("sonos", "\(host) \(call.action) failed: not an HTTP answer")
+            throw SonosError.badResponse
+        }
         let values = SimpleXML.leafValues(in: data)
-        if http.statusCode == 200 { return values }
+        if http.statusCode == 200 {
+            log?.trace("sonos", "\(host) \(call.action) ok")
+            return values
+        }
         // Sonos answers refusals with HTTP 500 and a UPnP error code.
-        if http.statusCode == 500 { throw SonosError.notAllowed }
+        if http.statusCode == 500 {
+            log?.warn("sonos", "\(host) \(call.action) refused by the speaker (HTTP 500, UPnP error \(values["errorCode"] ?? "unknown"))")
+            throw SonosError.notAllowed
+        }
+        log?.error("sonos", "\(host) \(call.action) failed: unexpected HTTP \(http.statusCode)")
         throw SonosError.badResponse
+    }
+
+    /// The reason a request got no answer, in words (the numbers are Apple's URL error codes).
+    static func describe(_ error: Error) -> String {
+        let code = (error as NSError).code
+        switch code {
+        case NSURLErrorTimedOut: return "timed out"
+        case NSURLErrorCannotConnectToHost: return "connection refused"
+        case NSURLErrorNetworkConnectionLost: return "connection lost"
+        case NSURLErrorNotConnectedToInternet: return "this Mac is offline"
+        case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: return "address not found"
+        default: return "error \(code)"
+        }
     }
 }

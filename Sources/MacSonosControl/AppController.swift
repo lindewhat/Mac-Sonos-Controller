@@ -10,7 +10,8 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
-    private let sonos = SonosController(discover: { await BonjourDiscovery().discover() })
+    private let sonos = SonosController(client: SonosClient(transport: HTTPSonosTransport(log: Log.shared)),
+                                        discover: { await BonjourDiscovery().discover() })
     private let router = KeyRouter()
     private let art = ArtLoader()
     private lazy var keyTap = MediaKeyTap(router: router)
@@ -69,6 +70,8 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     func start() {
+        let info = Bundle.main.infoDictionary
+        Log.shared.info("app", "started, version \(info?["CFBundleShortVersionString"] as? String ?? "?"), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
         menu.delegate = self
         statusItem.menu = menu
         // A cover that arrives while the menu is open appears right away.
@@ -92,7 +95,10 @@ final class AppController: NSObject, NSMenuDelegate {
             self?.perform(refreshNowPlaying: false) { try await $0.toggleMute(roomIDs: $1) }
         }
 
-        keyTap.onPermissionLost = { [weak self] in self?.applyKeySetting() }
+        keyTap.onPermissionLost = { [weak self] in
+            Log.shared.warn("keys", "Accessibility permission was taken away; media keys switched off until it is granted again")
+            self?.applyKeySetting()
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
                                                queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.keyTap.stop() } // give the keys back to macOS
@@ -133,6 +139,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
         if keysEnabled {
             if !keyTap.start() {
+                Log.shared.warn("keys", "media keys can't start yet: waiting for the Accessibility permission")
                 needsAccessibility = true
                 if !AXIsProcessTrusted() {
                     // Shows macOS's own "wants to control your computer" prompt.
@@ -181,6 +188,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 notice = nil
             }
         } catch {
+            Log.shared.error("app", "launch at login could not be changed: \(error.localizedDescription)")
             notice = "Couldn't change the launch at login setting."
         }
         rebuildMenu()
@@ -209,6 +217,7 @@ final class AppController: NSObject, NSMenuDelegate {
                 message = nil
                 if refreshNowPlaying { await readNowPlaying(ids) }
             } catch {
+                Log.shared.error("app", "command failed: \(error.localizedDescription)")
                 message = error.localizedDescription
             }
             updateIcon()
@@ -226,7 +235,10 @@ final class AppController: NSObject, NSMenuDelegate {
             let ids = await currentRoomIDs()
             if !ids.isEmpty {
                 do { try await sonos.adjustVolume(roomIDs: ids, by: steps); message = nil }
-                catch { message = error.localizedDescription }
+                catch {
+                    Log.shared.error("app", "volume change failed: \(error.localizedDescription)")
+                    message = error.localizedDescription
+                }
                 updateIcon()
                 rebuildMenu()
             }
@@ -278,9 +290,15 @@ final class AppController: NSObject, NSMenuDelegate {
             if message == SonosError.noSpeakers.errorDescription || message == SonosError.unreachable.errorDescription {
                 message = nil
             }
-        case .noSpeakers: screen = .noSpeakers; message = SonosError.noSpeakers.errorDescription
-        case .localNetworkDenied: screen = .localNetworkDenied; message = SonosError.localNetworkDenied.errorDescription
-        case .unreachable: screen = .unreachable; message = SonosError.unreachable.errorDescription
+        case .noSpeakers:
+            Log.shared.warn("app", "no Sonos speakers found on the network")
+            screen = .noSpeakers; message = SonosError.noSpeakers.errorDescription
+        case .localNetworkDenied:
+            Log.shared.warn("app", "Local Network access is turned off for this app")
+            screen = .localNetworkDenied; message = SonosError.localNetworkDenied.errorDescription
+        case .unreachable:
+            Log.shared.warn("app", "speakers were found but none answered")
+            screen = .unreachable; message = SonosError.unreachable.errorDescription
         }
     }
 
@@ -397,7 +415,10 @@ final class AppController: NSObject, NSMenuDelegate {
         let previous = tickChain
         tickChain = Task {
             await previous?.value
-            do { try await work() } catch { message = error.localizedDescription }
+            do { try await work() } catch {
+                Log.shared.error("app", "changing the speaker ticks failed: \(error.localizedDescription)")
+                message = error.localizedDescription
+            }
             try? await Task.sleep(nanoseconds: 500_000_000) // Sonos needs a moment to update its groups
             pendingTicks -= 1
             if pendingTicks == 0 {
