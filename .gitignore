@@ -1,1 +1,6 @@
+.build/
+.swiftpm/
+*.app
+.DS_Store
+build/
 CLAUDE.local.md
