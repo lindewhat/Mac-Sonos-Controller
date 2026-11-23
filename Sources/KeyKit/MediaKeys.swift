@@ -7,6 +7,9 @@ public enum MediaKey: Hashable, Sendable, CaseIterable {
 
     /// Holding these keys keeps sending presses (like holding volume up to keep turning it up).
     public var repeatsWhenHeld: Bool { self == .volumeUp || self == .volumeDown }
+
+    /// Play/pause, next, previous: keys where an Option modifier has no meaning of its own in macOS.
+    public var isTransport: Bool { self == .playPause || self == .next || self == .previous }
 }
 
 public struct MediaKeyEvent: Equatable, Sendable {

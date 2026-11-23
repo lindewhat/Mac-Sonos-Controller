@@ -33,6 +33,8 @@ private func data1(code: Int, state: Int, isRepeat: Bool = false) -> Int {
     #expect(MediaKeyDecoder.decode(data1: data1(code: 7, state: 0xA))?.key == .mute)
     #expect(MediaKey.volumeUp.repeatsWhenHeld && MediaKey.volumeDown.repeatsWhenHeld)
     #expect(!MediaKey.mute.repeatsWhenHeld && !MediaKey.playPause.repeatsWhenHeld)
+    #expect(MediaKey.playPause.isTransport && MediaKey.next.isTransport && MediaKey.previous.isTransport)
+    #expect(!MediaKey.volumeUp.isTransport && !MediaKey.mute.isTransport)
 }
 
 @Test func routerLetsKeysThroughWhenAnActionStepsAside() {
