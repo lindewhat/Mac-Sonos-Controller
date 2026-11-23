@@ -81,14 +81,14 @@ final class MediaKeyTap {
             return Unmanaged.passUnretained(event)
         }
         // Holding Option sends the key to the Mac as usual. The whole press (down, repeats, up) goes to the
-        // Mac even if Option is let go early. Play/next/previous with Option held do nothing in macOS, so
-        // Option is taken off the event first; volume keys keep it (Option+volume opens Sound settings).
+        // Mac even if Option is let go early. Option is taken off the event first: play/next/previous do
+        // nothing with it attached, and volume keys would open Sound settings instead of changing the volume.
         if media.isDown && !media.isRepeat {
             if nsEvent.modifierFlags.contains(.option) { passedToMac.insert(media.key) } else { passedToMac.remove(media.key) }
         }
         if passedToMac.contains(media.key) {
             if !media.isDown { passedToMac.remove(media.key) }
-            if media.key.isTransport { event.flags.remove(.maskAlternate) }
+            event.flags.remove(.maskAlternate)
             return Unmanaged.passUnretained(event)
         }
         if media.isDown && (!media.isRepeat || media.key.repeatsWhenHeld) {
