@@ -1,10 +1,10 @@
 import Foundation
 
 /// A plain text log on this Mac, so that when something breaks there is a record of what happened.
-/// One line per event: `2026-11-23 11:28:05 ERROR sonos 10.0.0.5 Pause failed: no answer (timed out)`.
+/// One line per event: `2026-11-23 11:28:05 ERROR sonos speaker 2 Pause failed: no answer (timed out)`.
 ///
-/// Never leaves the machine and never contains song titles, room names or account data. Speaker
-/// addresses on the local network are written, because they show which speaker misbehaved.
+/// Contains no personal data: no IP addresses, device names or ids, room names, song titles or accounts.
+/// Speakers are told apart by anonymous per-run labels ("speaker 2"). Callers must not put such data in a message.
 /// Writing can never fail loudly: if the file can't be written, the line is dropped.
 public final class Log: @unchecked Sendable {
     /// The app's real log: ~/Library/Logs/MacSonosControl/MacSonosControl.log.

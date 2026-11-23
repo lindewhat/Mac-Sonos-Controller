@@ -72,6 +72,7 @@ public protocol SonosTransport: Sendable {
 public struct HTTPSonosTransport: SonosTransport {
     private let session: URLSession
     private let log: Log?
+    private let labels = SpeakerLabels()
 
     /// `log` is where failures are recorded (the app passes its own; tests pass none, so they never write a real log).
     public init(session: URLSession? = nil, timeout: TimeInterval = 3, log: Log? = nil) {
@@ -103,24 +104,24 @@ public struct HTTPSonosTransport: SonosTransport {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            log?.error("sonos", "\(host) \(call.action) failed: no answer (\(Self.describe(error)))")
+            log?.error("sonos", "\(labels.label(for: host)) \(call.action) failed: no answer (\(Self.describe(error)))")
             throw SonosError.unreachable
         }
         guard let http = response as? HTTPURLResponse else {
-            log?.error("sonos", "\(host) \(call.action) failed: not an HTTP answer")
+            log?.error("sonos", "\(labels.label(for: host)) \(call.action) failed: not an HTTP answer")
             throw SonosError.badResponse
         }
         let values = SimpleXML.leafValues(in: data)
         if http.statusCode == 200 {
-            log?.trace("sonos", "\(host) \(call.action) ok")
+            log?.trace("sonos", "\(labels.label(for: host)) \(call.action) ok")
             return values
         }
         // Sonos answers refusals with HTTP 500 and a UPnP error code.
         if http.statusCode == 500 {
-            log?.warn("sonos", "\(host) \(call.action) refused by the speaker (HTTP 500, UPnP error \(values["errorCode"] ?? "unknown"))")
+            log?.warn("sonos", "\(labels.label(for: host)) \(call.action) refused by the speaker (HTTP 500, UPnP error \(values["errorCode"] ?? "unknown"))")
             throw SonosError.notAllowed
         }
-        log?.error("sonos", "\(host) \(call.action) failed: unexpected HTTP \(http.statusCode)")
+        log?.error("sonos", "\(labels.label(for: host)) \(call.action) failed: unexpected HTTP \(http.statusCode)")
         throw SonosError.badResponse
     }
 
@@ -135,5 +136,20 @@ public struct HTTPSonosTransport: SonosTransport {
         case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: return "address not found"
         default: return "error \(code)"
         }
+    }
+}
+
+/// Names speakers "speaker 1", "speaker 2"... in the order they are first seen since the app started, so a log
+/// can tell speakers apart without containing any address. The numbers mean nothing outside one run of the app.
+final class SpeakerLabels: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [String: Int] = [:]
+
+    func label(for host: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        if let number = seen[host] { return "speaker \(number)" }
+        seen[host] = seen.count + 1
+        return "speaker \(seen.count)"
     }
 }

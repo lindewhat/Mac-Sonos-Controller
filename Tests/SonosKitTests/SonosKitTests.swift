@@ -361,10 +361,26 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 @Suite(.serialized) struct HTTPTransportTests {
-    private func transport() -> HTTPSonosTransport {
+    private func transport(log: Log? = nil) -> HTTPSonosTransport {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
-        return HTTPSonosTransport(session: URLSession(configuration: config))
+        return HTTPSonosTransport(session: URLSession(configuration: config), log: log)
+    }
+
+    @Test func theLogNamesSpeakersByAnonymousLabelNeverByAddress() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("log-test-\(UUID().uuidString)")
+        let log = Log(fileURL: folder.appendingPathComponent("Test.log"), verbose: true)
+        let sender = transport(log: log)
+        StubURLProtocol.handler = { _ in (200, "<s:Envelope><s:Body><u:R><X>1</X></u:R></s:Body></s:Envelope>") }
+        _ = try await sender.send(SOAPCall(service: .avTransport, action: "GetTransportInfo"), to: "10.0.0.5")
+        StubURLProtocol.handler = { _ in (500, "<s:Envelope><s:Body><s:Fault><errorCode>701</errorCode></s:Fault></s:Body></s:Envelope>") }
+        _ = try? await sender.send(SOAPCall(service: .avTransport, action: "Pause"), to: "10.0.0.6")
+        _ = try? await sender.send(SOAPCall(service: .avTransport, action: "Pause"), to: "10.0.0.5")
+        let text = try String(contentsOf: log.fileURL, encoding: .utf8)
+        #expect(!text.contains("10.0.0."))
+        #expect(text.contains("speaker 1 GetTransportInfo ok"))
+        #expect(text.contains("speaker 2 Pause refused"))
+        #expect(text.contains("speaker 1 Pause refused")) // the same speaker keeps its label
     }
 
     @Test func sendsTheRightRequest() async throws {
