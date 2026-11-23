@@ -30,7 +30,14 @@ enum Fixtures {
     xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/"><item id="-1" parentID="-1" restricted="true">\
     <res protocolInfo="x-sonos-http:*:*:*">x-sonos-http:song.mp4</res>\
     <dc:title>Blue in Green &amp; More</dc:title><dc:creator>Miles Davis</dc:creator>\
-    <upnp:album>Kind of Blue</upnp:album></item></DIDL-Lite>
+    <upnp:album>Kind of Blue</upnp:album><upnp:albumArtURI>/getaa?s=1&amp;u=x-sonos-http%3asong.mp4</upnp:albumArtURI></item></DIDL-Lite>
+    """
+
+    // The next two songs in the queue, as Sonos answers a queue "Browse".
+    static let queueDIDL = """
+    <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">\
+    <item id="Q:0/3" parentID="Q:0"><dc:title>So What</dc:title><dc:creator>Miles Davis</dc:creator></item>\
+    <item id="Q:0/4" parentID="Q:0"><dc:title>Freddie Freeloader</dc:title><dc:creator></dc:creator></item></DIDL-Lite>
     """
 }
 
@@ -46,6 +53,11 @@ final class FakeTransport: SonosTransport, @unchecked Sendable {
     var muted = false
     var track = "1"
     var relTime = "0:00:05"
+    var trackDuration = "0:03:00"
+    var mediaURI = "x-rincon-queue:RINCON_KITCHEN#0" // what is playing: the queue, or a radio stream
+    var mediaMetadata = ""
+    private var _playMode = "NORMAL"
+    var playMode: String { get { lock.lock(); defer { lock.unlock() }; return _playMode } set { lock.lock(); _playMode = newValue; lock.unlock() } }
     private var _args: [String: String] = [:]
     var lastArguments: [String: String] { lock.lock(); defer { lock.unlock() }; return _args }
 
@@ -63,7 +75,14 @@ final class FakeTransport: SonosTransport, @unchecked Sendable {
         switch call.action {
         case "GetZoneGroupState": return Fixtures.zoneGroupSOAPAnswer
         case "GetTransportInfo": return ["CurrentTransportState": transportState]
-        case "GetPositionInfo": return ["TrackMetaData": Fixtures.didl, "Track": track, "RelTime": relTime]
+        case "GetPositionInfo":
+            return ["TrackMetaData": Fixtures.didl, "Track": track, "RelTime": relTime, "TrackDuration": trackDuration]
+        case "GetTransportSettings": return ["PlayMode": playMode]
+        case "SetPlayMode":
+            playMode = call.arguments.first { $0.name == "NewPlayMode" }?.value ?? playMode
+            return [:]
+        case "GetMediaInfo": return ["CurrentURI": mediaURI, "CurrentURIMetaData": mediaMetadata]
+        case "Browse": return ["Result": Fixtures.queueDIDL]
         case "GetGroupMute": return ["CurrentMute": muted ? "1" : "0"]
         case "Pause" where failPauseWithRefusal: throw SonosError.notAllowed
         default: return [:]

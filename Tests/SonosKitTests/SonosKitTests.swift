@@ -226,7 +226,94 @@ private func makeController(_ fake: FakeTransport, found: [String] = ["10.0.0.12
     let fake = FakeTransport()
     fake.transportState = "PLAYING"
     let info = try await makeController(fake).nowPlaying(roomIDs: ["RINCON_LIVING"])
-    #expect(info == NowPlaying(state: .playing, title: "Blue in Green & More", artist: "Miles Davis"))
+    #expect(info.state == .playing)
+    #expect(info.title == "Blue in Green & More")
+    #expect(info.artist == "Miles Davis")
+    #expect(info.album == "Kind of Blue")
+    // The cover is fetched from the speaker that leads the group, never from anywhere else.
+    #expect(info.artURL?.absoluteString == "http://10.0.0.11:1400/getaa?s=1&u=x-sonos-http%3asong.mp4")
+}
+
+@Test func nowPlayingFromTheQueueHasProgressControlsAndUpNext() async throws {
+    let fake = FakeTransport()
+    fake.transportState = "PLAYING"
+    fake.track = "2"
+    fake.relTime = "0:01:30"
+    let info = try await makeController(fake).nowPlaying(roomIDs: ["RINCON_LIVING"])
+    #expect(info.elapsedSeconds == 90 && info.durationSeconds == 180)
+    #expect(info.hasQueue)
+    #expect(info.playMode == PlayMode(shuffle: false, repeatMode: .off))
+    #expect(info.upNext == [QueueItem(title: "So What", artist: "Miles Davis"),
+                            QueueItem(title: "Freddie Freeloader", artist: nil)])
+    // Browse starts after the current song: song 2 is queue index 1, so the next one starts at index 2.
+    #expect(fake.lastArguments["StartingIndex"] == "2")
+}
+
+@Test func upNextIsHiddenWhenTheOrderIsNotKnown() async throws {
+    for mode in ["SHUFFLE_NOREPEAT", "SHUFFLE", "REPEAT_ONE", "SHUFFLE_REPEAT_ONE"] {
+        let fake = FakeTransport()
+        fake.transportState = "PLAYING"
+        fake.playMode = mode
+        let info = try await makeController(fake).nowPlaying(roomIDs: ["RINCON_LIVING"])
+        #expect(info.upNext.isEmpty, "mode \(mode)")
+        #expect(!fake.sent.contains { $0.action == "Browse" }, "mode \(mode) should not even ask for the queue")
+        #expect(info.playMode != nil)
+    }
+}
+
+@Test func radioHasNoQueueShuffleOrProgressButKeepsTheStationName() async throws {
+    let fake = FakeTransport()
+    fake.transportState = "PLAYING"
+    fake.mediaURI = "x-sonosapi-stream:s1234?sid=254"
+    fake.mediaMetadata = "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><item><dc:title>Radio Example</dc:title></item></DIDL-Lite>"
+    fake.trackDuration = "0:00:00"
+    let info = try await makeController(fake).nowPlaying(roomIDs: ["RINCON_LIVING"])
+    #expect(!info.hasQueue)
+    #expect(info.playMode == nil && info.upNext.isEmpty)
+    #expect(info.durationSeconds == nil && info.elapsedSeconds == nil)
+    #expect(info.station == "Radio Example")
+    #expect(!fake.sent.contains { $0.action == "Browse" })
+}
+
+@Test func shuffleAndRepeatControlsChangeTheModeStepByStep() async throws {
+    let fake = FakeTransport()
+    let controller = makeController(fake)
+    try await controller.toggleShuffle(roomIDs: ["RINCON_LIVING"])
+    #expect(fake.playMode == "SHUFFLE_NOREPEAT")
+    try await controller.cycleRepeat(roomIDs: ["RINCON_LIVING"])
+    #expect(fake.playMode == "SHUFFLE") // shuffle with repeat all
+    try await controller.cycleRepeat(roomIDs: ["RINCON_LIVING"])
+    #expect(fake.playMode == "SHUFFLE_REPEAT_ONE")
+    try await controller.toggleShuffle(roomIDs: ["RINCON_LIVING"])
+    #expect(fake.playMode == "REPEAT_ONE")
+    try await controller.cycleRepeat(roomIDs: ["RINCON_LIVING"])
+    #expect(fake.playMode == "NORMAL")
+    // Group commands go to the coordinator (the Kitchen), not to the room that was ticked.
+    #expect(fake.sent.filter { $0.action == "SetPlayMode" }.allSatisfy { $0.host == "10.0.0.11" })
+}
+
+@Test func playModeWordsRoundTrip() {
+    for word in ["NORMAL", "REPEAT_ALL", "REPEAT_ONE", "SHUFFLE_NOREPEAT", "SHUFFLE", "SHUFFLE_REPEAT_ONE"] {
+        #expect(PlayMode(sonosValue: word)?.sonosValue == word)
+    }
+    #expect(PlayMode(sonosValue: "NOT_IMPLEMENTED") == nil)
+    #expect(PlayMode(sonosValue: nil) == nil)
+}
+
+@Test func coverArtMustBeAPathOnTheSpeaker() {
+    func didl(_ art: String) -> String {
+        "<DIDL-Lite xmlns:dc=\"d\" xmlns:upnp=\"u\"><item><dc:title>T</dc:title><upnp:albumArtURI>\(art)</upnp:albumArtURI></item></DIDL-Lite>"
+    }
+    #expect(TrackInfo.parse(metadata: didl("/getaa?s=1")).artPath == "/getaa?s=1")
+    // A web address would send the app to the internet; it is ignored.
+    #expect(TrackInfo.parse(metadata: didl("https://cdn.example.com/cover.jpg")).artPath == nil)
+}
+
+@Test func radioShowsWhatIsOnAirAsTheTitleAndTheStationAsDetail() {
+    let metadata = "<DIDL-Lite xmlns:dc=\"d\" xmlns:r=\"r\"><item><dc:title>Radio Example</dc:title><r:streamContent>Some Artist - Some Song</r:streamContent></item></DIDL-Lite>"
+    let info = TrackInfo.parse(metadata: metadata)
+    #expect(info.title == "Some Artist - Some Song")
+    #expect(info.station == "Radio Example")
 }
 
 @Test func missingSpeakersGiveAClearErrorNotACrash() async {

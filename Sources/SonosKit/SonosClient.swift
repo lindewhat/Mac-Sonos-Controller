@@ -56,11 +56,62 @@ public struct SonosClient: Sendable {
         return PlaybackState(sonosValue: answer["CurrentTransportState"])
     }
 
+    /// Everything the menu shows about what is playing. Only the first two questions must be answered;
+    /// play mode, source and queue are extras, so a speaker that skips them still gives a usable result.
     public func nowPlaying(host: String) async throws -> NowPlaying {
         let state = try await self.state(host: host)
         let position = try await transport.send(avTransport("GetPositionInfo"), to: host)
         let info = TrackInfo.parse(metadata: position["TrackMetaData"])
-        return NowPlaying(state: state, title: info.title, artist: info.artist)
+        let track = position["Track"].flatMap { Int($0) } ?? 0
+        let duration = TrackPosition.seconds(fromSonosTime: position["TrackDuration"]).flatMap { $0 > 0 ? $0 : nil }
+        let elapsed = duration == nil ? nil : TrackPosition.seconds(fromSonosTime: position["RelTime"])
+
+        async let modeAnswer: PlayMode? = (try? await self.playMode(host: host)) ?? nil
+        async let mediaAnswer: MediaInfo? = try? await self.mediaInfo(host: host)
+        let mode = await modeAnswer
+        let media = await mediaAnswer
+        let hasQueue = media?.uri?.hasPrefix("x-rincon-queue:") ?? false
+
+        // The next songs are only known when the queue plays in order: with shuffle Sonos picks the next
+        // song itself and does not tell, and with repeat-one the next song is this one again.
+        var upNext: [QueueItem] = []
+        if hasQueue, track > 0, let mode, !mode.shuffle, mode.repeatMode != .one {
+            upNext = (try? await queue(host: host, after: track, count: 2)) ?? []
+        }
+        return NowPlaying(
+            state: state, title: info.title, artist: info.artist, album: info.album,
+            station: hasQueue ? nil : (media?.station ?? info.station),
+            artURL: info.artPath.flatMap { URL(string: "http://\(host):1400\($0)") },
+            elapsedSeconds: elapsed, durationSeconds: duration,
+            playMode: hasQueue ? mode : nil, hasQueue: hasQueue, upNext: upNext)
+    }
+
+    struct MediaInfo: Sendable {
+        let uri: String?
+        let station: String?
+    }
+
+    func mediaInfo(host: String) async throws -> MediaInfo {
+        let answer = try await transport.send(avTransport("GetMediaInfo"), to: host)
+        return MediaInfo(uri: answer["CurrentURI"], station: TrackInfo.sourceName(metadata: answer["CurrentURIMetaData"]))
+    }
+
+    public func playMode(host: String) async throws -> PlayMode? {
+        let answer = try await transport.send(avTransport("GetTransportSettings"), to: host)
+        return PlayMode(sonosValue: answer["PlayMode"])
+    }
+
+    public func setPlayMode(host: String, _ mode: PlayMode) async throws {
+        _ = try await transport.send(avTransport("SetPlayMode", [("NewPlayMode", mode.sonosValue)]), to: host)
+    }
+
+    /// The songs after the current one, in queue order. `track` is the current song's 1-based number.
+    func queue(host: String, after track: Int, count: Int) async throws -> [QueueItem] {
+        let call = SOAPCall(service: .contentDirectory, action: "Browse", arguments: [
+            ("ObjectID", "Q:0"), ("BrowseFlag", "BrowseDirectChildren"), ("Filter", "dc:title,dc:creator"),
+            ("StartingIndex", String(track)), ("RequestedCount", String(count)), ("SortCriteria", "")])
+        let answer = try await transport.send(call, to: host)
+        return QueueList.parse(didl: answer["Result"])
     }
 
     /// Track number and time into the track, or nil for things without a position (radio streams).

@@ -1,8 +1,8 @@
 import Foundation
 
-/// The three Sonos services we use. Sonos speakers answer these on port 1400.
+/// The Sonos services we use. Sonos speakers answer these on port 1400.
 public enum SonosService: Sendable {
-    case avTransport, zoneGroupTopology, renderingControl, groupRenderingControl
+    case avTransport, zoneGroupTopology, renderingControl, groupRenderingControl, contentDirectory
 
     var urn: String {
         switch self {
@@ -10,6 +10,7 @@ public enum SonosService: Sendable {
         case .zoneGroupTopology: return "urn:schemas-upnp-org:service:ZoneGroupTopology:1"
         case .renderingControl: return "urn:schemas-upnp-org:service:RenderingControl:1"
         case .groupRenderingControl: return "urn:schemas-upnp-org:service:GroupRenderingControl:1"
+        case .contentDirectory: return "urn:schemas-upnp-org:service:ContentDirectory:1"
         }
     }
 
@@ -19,6 +20,7 @@ public enum SonosService: Sendable {
         case .zoneGroupTopology: return "/ZoneGroupTopology/Control"
         case .renderingControl: return "/MediaRenderer/RenderingControl/Control"
         case .groupRenderingControl: return "/MediaRenderer/GroupRenderingControl/Control"
+        case .contentDirectory: return "/MediaServer/ContentDirectory/Control"
         }
     }
 }

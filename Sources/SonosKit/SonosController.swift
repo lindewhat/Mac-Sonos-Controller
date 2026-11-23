@@ -255,6 +255,25 @@ public actor SonosController {
         try await run(on: hosts) { try await client.setGroupMute(host: $0, muted: desired) }
     }
 
+    /// Turns shuffle on or off for the group's queue.
+    public func toggleShuffle(roomIDs: [String]) async throws {
+        try await changePlayMode(roomIDs: roomIDs) { PlayMode(shuffle: !$0.shuffle, repeatMode: $0.repeatMode) }
+    }
+
+    /// Steps repeat through off, all, one.
+    public func cycleRepeat(roomIDs: [String]) async throws {
+        try await changePlayMode(roomIDs: roomIDs) { PlayMode(shuffle: $0.shuffle, repeatMode: $0.repeatMode.next) }
+    }
+
+    private func changePlayMode(roomIDs: [String], _ change: @escaping @Sendable (PlayMode) -> PlayMode) async throws {
+        let hosts = try await coordinatorHosts(for: roomIDs)
+        let client = self.client
+        try await run(on: hosts) { host in
+            let current = (try await client.playMode(host: host)) ?? PlayMode(shuffle: false, repeatMode: .off)
+            try await client.setPlayMode(host: host, change(current))
+        }
+    }
+
     public func nowPlaying(roomIDs: [String]) async throws -> NowPlaying {
         let hosts = try await coordinatorHosts(for: roomIDs)
         let client = self.client

@@ -12,11 +12,13 @@ final class AppController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
     private let sonos = SonosController(discover: { await BonjourDiscovery().discover() })
     private let router = KeyRouter()
+    private let art = ArtLoader()
     private lazy var keyTap = MediaKeyTap(router: router)
 
     private var screen: Screen = .searching
     private var rooms: [Room] = []
     private var nowPlaying: NowPlaying?
+    private var nowPlayingRequest = 0   // counts reads of "what is playing", to ignore stale answers
     private var message: String?        // last problem, shown in plain language
     private var refreshing = false
     private var needsAccessibility = false
@@ -69,6 +71,11 @@ final class AppController: NSObject, NSMenuDelegate {
     func start() {
         menu.delegate = self
         statusItem.menu = menu
+        // A cover that arrives while the menu is open appears right away.
+        art.onLoaded = { [weak self] url in
+            guard let self, self.nowPlaying?.artURL == url else { return }
+            self.rebuildSoon()
+        }
 
         // What each media key does. The key listener knows nothing about Sonos; to add another
         // action, register another closure here.
@@ -200,7 +207,7 @@ final class AppController: NSObject, NSMenuDelegate {
             do {
                 try await work(sonos, ids)
                 message = nil
-                if refreshNowPlaying { nowPlaying = try? await sonos.nowPlaying(roomIDs: ids) }
+                if refreshNowPlaying { await readNowPlaying(ids) }
             } catch {
                 message = error.localizedDescription
             }
@@ -244,12 +251,21 @@ final class AppController: NSObject, NSMenuDelegate {
             } else {
                 applyResult(result)
             }
-            let ids = selectedRoomIDs
-            nowPlaying = ids.isEmpty ? nil : try? await sonos.nowPlaying(roomIDs: ids)
+            await readNowPlaying(selectedRoomIDs)
             refreshing = false
             updateIcon()
             rebuildMenu()
         }
+    }
+
+    /// Asks the speakers what is playing. If another read was started in the meantime (for example a click on
+    /// shuffle while the menu's own refresh was still running), the older answer is dropped, so a late, stale
+    /// answer can never overwrite a newer one.
+    private func readNowPlaying(_ ids: [String]) async {
+        nowPlayingRequest += 1
+        let mine = nowPlayingRequest
+        let result = ids.isEmpty ? nil : try? await sonos.nowPlaying(roomIDs: ids)
+        if mine == nowPlayingRequest { nowPlaying = result }
     }
 
     private func applyResult(_ result: RefreshResult, playingHosts: Set<String> = []) {
@@ -491,13 +507,7 @@ final class AppController: NSObject, NSMenuDelegate {
         if tickedRooms.isEmpty {
             addInfo("Playing on: nothing. Tick a speaker below.")
         } else {
-            let label = allTicked && rooms.count > 1 ? "all speakers" : tickedRooms.map(\.name).joined(separator: ", ")
-            addInfo("Playing on: " + label)
-            if let np = nowPlaying, let title = np.title {
-                addInfo("♪ " + shorten(np.artist.map { "\(title) – \($0)" } ?? title))
-            }
-            let isPlaying = nowPlaying?.state == .playing || nowPlaying?.state == .transitioning
-            addAction(isPlaying ? "Pause" : "Play", #selector(playPause))
+            addNowPlaying()
         }
 
         menu.addItem(.separator())
@@ -537,8 +547,19 @@ final class AppController: NSObject, NSMenuDelegate {
         menu.addItem(item)
     }
 
-    private func shorten(_ text: String, limit: Int = 60) -> String {
-        text.count > limit ? String(text.prefix(limit - 1)) + "…" : text
+    /// The cover, title, progress, buttons and up-next block. The buttons do what the media keys do.
+    private func addNowPlaying() {
+        let cover = nowPlaying?.artURL.flatMap { art.cached($0) }
+        if cover == nil, let url = nowPlaying?.artURL { art.fetch(url) }
+        let view = NowPlayingView(nowPlaying: nowPlaying, cover: cover, actions: .init(
+            previous: { [weak self] in self?.perform { try await $0.previous(roomIDs: $1) } },
+            playPause: { [weak self] in self?.playPause() },
+            next: { [weak self] in self?.perform { try await $0.next(roomIDs: $1) } },
+            shuffle: { [weak self] in self?.perform { try await $0.toggleShuffle(roomIDs: $1) } },
+            repeatMode: { [weak self] in self?.perform { try await $0.cycleRepeat(roomIDs: $1) } }))
+        let item = NSMenuItem()
+        item.view = view
+        menu.addItem(item)
     }
 
     private func addInfo(_ text: String) {

@@ -36,16 +36,97 @@ public enum PlaybackState: Equatable, Sendable {
     }
 }
 
+public enum RepeatMode: Equatable, Sendable {
+    case off, all, one
+
+    /// The order the repeat button cycles through: off, all, one, off...
+    public var next: RepeatMode {
+        switch self {
+        case .off: return .all
+        case .all: return .one
+        case .one: return .off
+        }
+    }
+}
+
+/// Sonos keeps shuffle and repeat in one word, e.g. SHUFFLE_NOREPEAT or REPEAT_ALL.
+public struct PlayMode: Equatable, Sendable {
+    public var shuffle: Bool
+    public var repeatMode: RepeatMode
+
+    public init(shuffle: Bool, repeatMode: RepeatMode) {
+        self.shuffle = shuffle
+        self.repeatMode = repeatMode
+    }
+
+    init?(sonosValue: String?) {
+        switch sonosValue {
+        case "NORMAL": self.init(shuffle: false, repeatMode: .off)
+        case "REPEAT_ALL": self.init(shuffle: false, repeatMode: .all)
+        case "REPEAT_ONE": self.init(shuffle: false, repeatMode: .one)
+        case "SHUFFLE_NOREPEAT": self.init(shuffle: true, repeatMode: .off)
+        case "SHUFFLE": self.init(shuffle: true, repeatMode: .all) // Sonos calls shuffle plus repeat-all just "SHUFFLE"
+        case "SHUFFLE_REPEAT_ONE": self.init(shuffle: true, repeatMode: .one)
+        default: return nil
+        }
+    }
+
+    var sonosValue: String {
+        switch (shuffle, repeatMode) {
+        case (false, .off): return "NORMAL"
+        case (false, .all): return "REPEAT_ALL"
+        case (false, .one): return "REPEAT_ONE"
+        case (true, .off): return "SHUFFLE_NOREPEAT"
+        case (true, .all): return "SHUFFLE"
+        case (true, .one): return "SHUFFLE_REPEAT_ONE"
+        }
+    }
+}
+
+/// A song waiting in the queue.
+public struct QueueItem: Equatable, Sendable {
+    public let title: String
+    public let artist: String?
+    public init(title: String, artist: String?) {
+        self.title = title
+        self.artist = artist
+    }
+}
+
 public struct NowPlaying: Equatable, Sendable {
     public let state: PlaybackState
     public let title: String?
     public let artist: String?
+    public let album: String?
+    public let station: String?         // the radio station, for streams
+    public let artURL: URL?             // cover art, always served by the speaker itself
+    public let elapsedSeconds: Int?     // nil for radio and other things without a position
+    public let durationSeconds: Int?
+    public let playMode: PlayMode?      // nil when the source has no shuffle or repeat
+    public let hasQueue: Bool           // true when playing from the queue (so skipping works)
+    public let upNext: [QueueItem]      // empty with shuffle on, repeat-one, radio, or at the end of the queue
+    public let observedAt: Date         // when the speaker was asked; lets the menu count seconds locally
 
-    public init(state: PlaybackState, title: String?, artist: String?) {
+    public init(state: PlaybackState, title: String?, artist: String?, album: String? = nil, station: String? = nil,
+                artURL: URL? = nil, elapsedSeconds: Int? = nil, durationSeconds: Int? = nil,
+                playMode: PlayMode? = nil, hasQueue: Bool = false, upNext: [QueueItem] = [],
+                observedAt: Date = Date()) {
         self.state = state
         self.title = title
         self.artist = artist
+        self.album = album
+        self.station = station
+        self.artURL = artURL
+        self.elapsedSeconds = elapsedSeconds
+        self.durationSeconds = durationSeconds
+        self.playMode = playMode
+        self.hasQueue = hasQueue
+        self.upNext = upNext
+        self.observedAt = observedAt
     }
+
+    /// The line under the artist: the album for songs, the station for radio.
+    public var detail: String? { album ?? station }
 }
 
 /// Plain-language errors; the menu shows `errorDescription` as is.
