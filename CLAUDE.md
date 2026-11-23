@@ -36,6 +36,7 @@ Tests only: `swift test`.
 - Holding Option while pressing a media key sends it to the Mac as usual (escape hatch). The app removes Option from the event before passing it on: macOS ignores play/next/previous with Option attached, and Option+volume would open Sound settings instead of changing the volume. The whole press goes to the Mac even if Option is released early. (When the app does not claim a key, e.g. volume keys switched off, Option is untouched and macOS behaves as normal.)
 - Apple keyboards send F7/F9 as "rewind"/"fast" codes (20/19), others as previous/next (18/17): both handled.
 - macOS 27 shows "Choose Apps / Override System Protections" for Accessibility. Choose Apps is not enough for system-wide keys; the guide tells users to pick Override.
+- build.sh stamps the program with the real macOS SDK version (`vtool`, after building, before signing). SwiftPM stamps SDK 14.0, and macOS then gives the app the old look: a nearly solid menu that ignores "Reduce transparency". With the real SDK the menu looks like every current menu. The minimum macOS stays 14.
 - build.sh assembles the app in $TMPDIR (not the Desktop folder): iCloud/Finder markings there break code signing. It verifies the signature after installing.
 - Privacy: only LAN traffic to Sonos. No analytics, no cloud calls, no logging of personal data (room names, IPs, track titles).
 - Sharing later (not done): paid Apple Developer Program, Developer ID signing, Hardened Runtime, notarization.

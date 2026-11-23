@@ -32,6 +32,15 @@ BIN="$(swift build -c release --arch arm64 --show-bin-path)/MacSonosControl"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN" "$APP/Contents/MacOS/MacSonosControl"
+# SwiftPM stamps the program as built with the oldest supported macOS SDK (14). macOS then gives the app the
+# old look: a nearly solid menu that ignores the "Reduce transparency" setting. Stamp the SDK that was really
+# used, so the menu looks and behaves like every other current menu. Falls back quietly if vtool is missing.
+SDK_VERSION="$(xcrun --show-sdk-version)"
+if vtool -set-build-version macos 14.0 "$SDK_VERSION" -replace -output "$BUILD_DIR/stamped" "$APP/Contents/MacOS/MacSonosControl" 2>/dev/null; then
+  mv "$BUILD_DIR/stamped" "$APP/Contents/MacOS/MacSonosControl"
+else
+  echo "NOTE: could not stamp the SDK version; the menu may look older than other menus."
+fi
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
